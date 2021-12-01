@@ -13,10 +13,12 @@
 
 typedef short bool;
 #define true 1
-#define false 1
+#define false 0
 
 #define SHKEY 300
 
+enum ProcessState{BLOCKED, READY, RUNNING};
+enum Algorithm{HPF, SRTN, RR};
 
 ///==============================
 //don't mess with this variable//
