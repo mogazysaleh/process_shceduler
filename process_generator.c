@@ -1,6 +1,7 @@
 #include "headers.h"
 
 void clearResources(int);
+void startClk();
 
 int main(int argc, char * argv[])
 {
@@ -8,12 +9,17 @@ int main(int argc, char * argv[])
     // TODO Initialization
     // 1. Read the input files.
     // 2. Ask the user for the chosen scheduling algorithm and its parameters, if there are any.
+    
     // 3. Initiate and create the scheduler and clock processes.
+    startClk(); 
+
     // 4. Use this function after creating the clock process to initialize clock
+
     initClk();
     // To get time use this
     int x = getClk();
-    printf("current time is %d\n", x);
+    while(1)
+    printf("current time is %d\n", getClk());
     // TODO Generation Main Loop
     // 5. Create a data structure for processes and provide it with its parameters.
     // 6. Send the information to the scheduler at the appropriate time.
@@ -23,5 +29,24 @@ int main(int argc, char * argv[])
 
 void clearResources(int signum)
 {
+    exit(EXIT_SUCCESS);
     //TODO Clears all resources in case of interruption
+}
+
+void startClk()
+{
+    pid_t clk_id = fork();
+    if(clk_id == -1)
+    {
+        perror("Error forking for clock");
+        exit(EXIT_FAILURE);
+    }
+    else if(clk_id == 0)
+    {
+        char *const paramList[] = {"./clk", NULL};
+        execv("./clk", paramList);
+        //if it executes what is under this line, then execv has failed
+        perror("Error in execv'ing to clock");
+        exit(EXIT_FAILURE);
+    }
 }
