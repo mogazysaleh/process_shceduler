@@ -3,13 +3,14 @@
 void clearResources(int);
 void startClk();
 enum Algorithm getAlgorithm();
-
+void readInputFile(char* pFileName);
 
 int main(int argc, char * argv[])
 {
     signal(SIGINT, clearResources);
     // TODO Initialization
     // 1. Read the input files.
+    readInputFile("processes.txt");
     // 2. Ask the user for the chosen scheduling algorithm and its parameters, if there are any.
     getAlgorithm();
     // 3. Initiate and create the scheduler and clock processes.
@@ -66,4 +67,37 @@ enum Algorithm getAlgorithm()
         exit(EXIT_FAILURE);
     }
     return choice - 1;
+}
+
+
+void readInputFile(char* pFileName)
+{
+    FILE *pInputFile;
+
+    char * line = NULL;
+    size_t len = 0;
+    ssize_t read;
+
+    int id, arrivalTime, runtime, priority;
+
+    pInputFile = fopen(pFileName, "r");
+    if (pInputFile==NULL)
+    {
+        perror("Error reading input file!");
+        exit(EXIT_FAILURE);
+    }
+    getline(&line, &len, pInputFile); //read comment line 
+    while (fscanf(pInputFile, "%d", &id)!= -1) 
+    { 
+        fscanf(pInputFile, "%d", &arrivalTime);
+        fscanf(pInputFile, "%d", &runtime);
+        fscanf(pInputFile, "%d", &priority);
+        printf("%d    ", id);
+        printf("%d    ", arrivalTime);
+        printf("%d    ", runtime);
+        printf("%d    ", priority);
+        printf("\n");    
+    }
+
+    fclose(pInputFile);
 }
