@@ -5,6 +5,17 @@ void startClk();
 void startScheduler(int);
 void* schedulerShm();
 enum Algorithm getAlgorithm();
+
+
+struct processData;
+struct Node;
+
+struct Node *front = NULL, *rear = NULL;
+
+void enqueue(struct processData val);
+bool dequeue(struct processData **p);
+bool isEmpty();
+
 void readInputFile(char* pFileName);
 
 int main(int argc, char * argv[])
@@ -102,6 +113,91 @@ enum Algorithm getAlgorithm()
     return choice - 1;
 }
 
+struct processData
+{
+    int arrivaltime;
+    int priority;
+    int runningtime;
+    int id;
+};
+
+struct Node
+{
+    struct processData data;
+    struct Node *next;
+};
+
+
+
+void enqueue(struct processData val)
+{
+    struct Node *newNode = malloc(sizeof(struct Node));
+
+    newNode->data.id = val.id;
+    newNode->data.arrivaltime=val.arrivaltime;
+    newNode->data.runningtime = val.runningtime;
+    newNode->data.priority=val.priority;
+
+    newNode->next = NULL;
+    
+    //if it is the first Node
+    if(front == NULL && rear == NULL)
+        //make both front and rear points to the new Node
+    {
+        front = newNode;
+        rear = newNode;
+    }
+    else
+    {
+        //add newnode in rear->next
+        rear->next = newNode;
+
+        //make the new Node as the rear Node
+        rear = newNode;
+    }
+}
+
+bool dequeue(struct processData **p)
+{
+    //used to free the first Node after dequeue
+    struct Node *temp;
+
+    if(front == NULL)
+         return false;
+    else
+    {
+        //take backup
+        temp = front;
+
+        //make the front Node points to the next Node
+        //logically removing the front element
+        front = front->next;
+
+        if(front == NULL)
+            rear = NULL;
+
+        struct processData *data = malloc(sizeof(struct processData));
+        data->id = temp->data.id;
+        data->arrivaltime = temp->data.arrivaltime;
+        data->runningtime = temp->data.runningtime;
+        data->priority = temp->data.priority;
+
+        *p=data;
+
+        //free the first node
+        free(temp);
+
+        return true;
+    }
+}
+
+bool isEmpty()
+{
+    if(rear==NULL & front==NULL)
+        return true;
+    else 
+        return false;
+}
 
 void readInputFile(char* pFileName)
 {
@@ -110,8 +206,7 @@ void readInputFile(char* pFileName)
     char * line = NULL;
     size_t len = 0;
     ssize_t read;
-
-    int id, arrivalTime, runtime, priority;
+    struct processData p;
 
     pInputFile = fopen(pFileName, "r");
     if (pInputFile==NULL)
@@ -120,16 +215,12 @@ void readInputFile(char* pFileName)
         exit(EXIT_FAILURE);
     }
     getline(&line, &len, pInputFile); //read comment line 
-    while (fscanf(pInputFile, "%d", &id)!= -1) 
+    while (fscanf(pInputFile, "%d", &p.id)!= -1) 
     { 
-        fscanf(pInputFile, "%d", &arrivalTime);
-        fscanf(pInputFile, "%d", &runtime);
-        fscanf(pInputFile, "%d", &priority);
-        printf("%d    ", id);
-        printf("%d    ", arrivalTime);
-        printf("%d    ", runtime);
-        printf("%d    ", priority);
-        printf("\n");    
+        fscanf(pInputFile, "%d", &p.arrivaltime);
+        fscanf(pInputFile, "%d", &p.runningtime);
+        fscanf(pInputFile, "%d", &p.priority);
+        enqueue(p);
     }
 
     fclose(pInputFile);
