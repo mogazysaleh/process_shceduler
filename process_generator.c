@@ -2,6 +2,8 @@
 
 void clearResources(int);
 void startClk();
+void startScheduler(int);
+void* schedulerShm();
 enum Algorithm getAlgorithm();
 void readInputFile(char* pFileName);
 
@@ -12,9 +14,12 @@ int main(int argc, char * argv[])
     // 1. Read the input files.
     readInputFile("processes.txt");
     // 2. Ask the user for the chosen scheduling algorithm and its parameters, if there are any.
-    getAlgorithm();
+    int algo = getAlgorithm();
+    //printf("algoo is %d", algo);
+
     // 3. Initiate and create the scheduler and clock processes.
     startClk(); 
+    startScheduler(algo);
 
     // 4. Use this function after creating the clock process to initialize clock
     initClk();
@@ -50,6 +55,34 @@ void startClk()
         perror("Error in execv'ing to clock");
         exit(EXIT_FAILURE);
     }
+}
+
+void startScheduler(int algo)
+{
+    pid_t scheduler_id = fork();
+    if(scheduler_id == -1)
+    {
+        perror("Error forking for scheduler");
+        exit(EXIT_FAILURE);
+    }
+    else
+    {
+        char s[3];
+        sprintf(s,"%d", algo);
+        //printf("algo is %s", s);
+        char *const paramList[] = {"./scheduler", s, NULL};
+        execv("./scheduler", paramList);
+
+        perror("Error in execv'ing to scheduler");
+        exit(EXIT_FAILURE);
+    }
+}
+
+void* schedulerShm()
+{
+    int key = shmget(1, 1024, IPC_EXCL | 0644);
+    void* shmaddr = shmat(key, (void *) 0, 0);
+    return shmaddr;
 }
 
 enum Algorithm getAlgorithm()
