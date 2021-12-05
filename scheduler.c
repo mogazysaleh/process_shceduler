@@ -1,21 +1,9 @@
 #include "headers.h"
 
-enum ProcessState{BLOCKED, READY, RUNNING};
-struct PCB;
-void* getPGconnection();
-
-int main(int argc, char * argv[])
+typedef struct PCB
 {
-    initClk();
-    //TODO implement the scheduler :)
-    //upon termination release the clock resources
-    
-    destroyClk(true);
-}
-
-struct PCB
-{
-    pid_t processId;
+    int id; //id from file
+    pid_t processId; //getpid()
     enum ProcessState state;
     int priority;
     int arrivalTime;
@@ -23,11 +11,48 @@ struct PCB
     int runningTime;
     int waitingTime;
     int remainingTime;
-};
+} PCB;
 
-void* getPGconnection()
+processData rcvd;
+PCB **readyQ;
+int qSize = 0;
+
+
+void cpyPrcs(PCB* prcs, processData* rcvd)
 {
-    int key = shmget(1, 1024, IPC_CREAT | 0644);
-    void* shmaddr = shmat(key, (void *) 0, 0);
-    return shmaddr;
+    prcs->id = rcvd->id;
+    prcs->priority = rcvd->priority;
+    prcs->runningTime = rcvd->runningtime;
+    prcs->arrivalTime = rcvd->arrivaltime;
 }
+
+void _printQ()
+{
+    for(int i = 0; i < qSize; i++)
+        printf("%d  %d  %d  %d\n", readyQ[i]->id, readyQ[i]->priority, readyQ[i]->runningTime, readyQ[i]->arrivalTime);
+}
+
+int main(int argc, char * argv[])
+{
+    initClk();
+    initMsgQ();
+    Algorithm algo = atoi(argv[1]);
+    int processesCnt = atoi(argv[2]);
+    readyQ = (PCB**) malloc(sizeof(PCB*) * processesCnt);
+    //TODO implement the scheduler :)
+    //upon termination release the clock resources
+    while(true)
+    {
+        if(rcvPrcs(&rcvd) != -1) //process arrived
+        {
+            printf("rcvd ysta\n");
+            PCB* prcs = (PCB*) malloc(sizeof(PCB));
+            cpyPrcs(prcs, &rcvd);
+            readyQ[qSize++] = prcs;
+        }
+        if(getClk() == 10)
+            _printQ();
+    }
+    destroyClk(true);
+}
+

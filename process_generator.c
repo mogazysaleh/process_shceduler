@@ -1,32 +1,35 @@
 #include "headers.h"
 
+Node *front = NULL, *rear = NULL;
+int processesCnt = 0;
+
 void clearResources(int);
 void startClk();
 void startScheduler(int);
-void* schedulerShm();
-enum Algorithm getAlgorithm();
+Algorithm getAlgorithm();
 
-
-struct processData;
-struct Node;
-
-struct Node *front = NULL, *rear = NULL;
-
-void enqueue(struct processData val);
-bool dequeue(struct processData **p);
+void enqueue(processData val);
+bool dequeue(processData *p);
 bool isEmpty();
+void pop();
 
 void readInputFile(char* pFileName);
+
+//test functions
+void _printQueue(Node* front);
 
 int main(int argc, char * argv[])
 {
     signal(SIGINT, clearResources);
-    // TODO Initialization
+
+    processData *prcs;
+    
     // 1. Read the input files.
     readInputFile("processes.txt");
+
+
     // 2. Ask the user for the chosen scheduling algorithm and its parameters, if there are any.
     int algo = getAlgorithm();
-    //printf("algoo is %d", algo);
 
     // 3. Initiate and create the scheduler and clock processes.
     startClk(); 
@@ -34,69 +37,82 @@ int main(int argc, char * argv[])
 
     // 4. Use this function after creating the clock process to initialize clock
     initClk();
+    initMsgQ();
 
     // To get time use this
-    printf("current time is %d\n", getClk());
-    // TODO Generation Main Loop
+    
+    // TODO 
     // 5. Create a data structure for processes and provide it with its parameters.
-    // 6. Send the information to the scheduler at the appropriate time.
+    
     // 7. Clear clock resources
-    destroyClk(true);
+
+    //Generation Main Loop
+    while(true)
+    {
+        // 6. Send the information to the scheduler at the appropriate time.
+        if(front != NULL && front->data.arrivaltime == getClk()) 
+        {
+            sendPrcs(&(front->data));
+            pop();
+        }
+    }
+    clearResources(0);
 }
+
+
+
+
+
 
 void clearResources(int signum)
 {
+    destroyClk(true);
+    destroyMsgQ();
     exit(EXIT_SUCCESS);
-    //TODO Clears all resources in case of interruption
 }
 
 void startClk()
 {
     pid_t clk_id = fork();
-    if(clk_id == -1)
+    if(clk_id == -1) //Error Occured
     {
         perror("Error forking for clock");
         exit(EXIT_FAILURE);
     }
-    else if(clk_id == 0)
+    else if(clk_id == 0) //Child
     {
-        char *const paramList[] = {"./clk", NULL};
-        execv("./clk", paramList);
+        char *const paramList[] = {"./clk.out", NULL};
+        execv("./clk.out", paramList);
         //if it executes what is under this line, then execv has failed
         perror("Error in execv'ing to clock");
         exit(EXIT_FAILURE);
     }
+    //Parent continues and exits the function
 }
 
 void startScheduler(int algo)
 {
     pid_t scheduler_id = fork();
-    if(scheduler_id == -1)
+    if(scheduler_id == -1) //Error Occured
     {
         perror("Error forking for scheduler");
         exit(EXIT_FAILURE);
     }
-    else
+    else if(scheduler_id == 0) //Child
     {
-        char s[3];
-        sprintf(s,"%d", algo);
-        //printf("algo is %s", s);
-        char *const paramList[] = {"./scheduler", s, NULL};
-        execv("./scheduler", paramList);
+        char sAlgo[5]; //converting algo to char
+        char sCnt[5];
+        sprintf(sAlgo, "%d", algo);
+        sprintf(sCnt, "%d", processesCnt);
+        char *const paramList[] = {"./scheduler.out", sAlgo, sCnt, NULL};
+        execv("./scheduler.out", paramList);
 
         perror("Error in execv'ing to scheduler");
         exit(EXIT_FAILURE);
     }
 }
 
-void* schedulerShm()
-{
-    int key = shmget(1, 1024, IPC_EXCL | 0644);
-    void* shmaddr = shmat(key, (void *) 0, 0);
-    return shmaddr;
-}
-
-enum Algorithm getAlgorithm()
+Algorithm getAlgorithm()
 {
     int choice;
     printf(
@@ -113,25 +129,9 @@ enum Algorithm getAlgorithm()
     return choice - 1;
 }
 
-struct processData
+void enqueue(processData val)
 {
-    int arrivaltime;
-    int priority;
-    int runningtime;
-    int id;
-};
-
-struct Node
-{
-    struct processData data;
-    struct Node *next;
-};
-
-
-
-void enqueue(struct processData val)
-{
-    struct Node *newNode = malloc(sizeof(struct Node));
+    Node *newNode = malloc(sizeof(Node));
 
     newNode->data.id = val.id;
     newNode->data.arrivaltime=val.arrivaltime;
@@ -157,10 +157,10 @@ void enqueue(struct processData val)
     }
 }
 
-bool dequeue(struct processData **p)
+bool dequeue(processData *p)
 {
     //used to free the first Node after dequeue
-    struct Node *temp;
+    Node *temp;
 
     if(front == NULL)
          return false;
@@ -176,19 +176,26 @@ bool dequeue(struct processData **p)
         if(front == NULL)
             rear = NULL;
 
-        struct processData *data = malloc(sizeof(struct processData));
+        processData *data = malloc(sizeof(processData));
         data->id = temp->data.id;
         data->arrivaltime = temp->data.arrivaltime;
         data->runningtime = temp->data.runningtime;
         data->priority = temp->data.priority;
 
-        *p=data;
+        p=data;
 
         //free the first node
         free(temp);
 
         return true;
     }
+}
+
+void pop()
+{
+    Node* temp = front;
+    front = front->next;
+    free(temp);
 }
 
 bool isEmpty()
@@ -206,7 +213,7 @@ void readInputFile(char* pFileName)
     char * line = NULL;
     size_t len = 0;
     ssize_t read;
-    struct processData p;
+    processData p;
 
     pInputFile = fopen(pFileName, "r");
     if (pInputFile==NULL)
@@ -216,7 +223,8 @@ void readInputFile(char* pFileName)
     }
     getline(&line, &len, pInputFile); //read comment line 
     while (fscanf(pInputFile, "%d", &p.id)!= -1) 
-    { 
+    {
+        processesCnt++;
         fscanf(pInputFile, "%d", &p.arrivaltime);
         fscanf(pInputFile, "%d", &p.runningtime);
         fscanf(pInputFile, "%d", &p.priority);
@@ -224,4 +232,13 @@ void readInputFile(char* pFileName)
     }
 
     fclose(pInputFile);
+}
+
+void _printQueue(Node* front) //Internal function to test the correctness of inputting
+{
+    while(front)
+    {
+        printf("%d\n", front->data);
+        front = front->next;
+    }
 }
