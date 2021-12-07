@@ -11,13 +11,13 @@
 #include <unistd.h>
 #include <signal.h>
 
-typedef short bool;
 #define true 1
 #define false 0
-
 #define SHKEY 300
 #define QKEY 200
 
+
+typedef short bool;
 typedef enum ProcessState{BLOCKED, READY, RUNNING} ProcessState; //may be removed
 typedef enum Algorithm{HPF, SRTN, RR} Algorithm;
 typedef struct processData
@@ -28,11 +28,22 @@ typedef struct processData
     int runningtime;
 }processData;
 
-typedef struct Node
+typedef struct PCB
 {
-    struct processData data;
-    struct Node *next;
-}Node;
+    int id; //id from file
+    pid_t processId; //getpid()
+    ProcessState state;
+    int priority;//from process_generator
+    int arrivalTime;//from process_generator
+    int runningTime;//from process_generator
+    int waitingTime;//from handler(finish time - running time)
+    int remainingTime;//from process_generator (update in algorithm)
+    int startTime;//in algorithm
+    int finishTime;//handler
+} PCB;
+
+
+
 
 int qid; //id of the msgQ to be used to share processes between scheduler and process_generator
 
@@ -85,15 +96,7 @@ void destroyClk(bool terminateAll)
     }
 }
 
-void initMsgQ()
-{
-    qid = msgget(QKEY, IPC_CREAT | 0664);
-    if(qid == -1)
-    {
-        perror("Error initializing MSGQ");
-        exit(EXIT_FAILURE);
-    }
-}
+
 
 void sendPrcs(processData* prcs)
 {
@@ -103,11 +106,6 @@ void sendPrcs(processData* prcs)
         perror("Error sending a msg");
         exit(EXIT_FAILURE);
     }
-}
-
-int rcvPrcs(processData* prcs)
-{
-    return msgrcv(qid, prcs, sizeof(processData), 0, IPC_NOWAIT);
 }
 
 void destroyMsgQ()

@@ -1,7 +1,25 @@
 #include "headers.h"
 
+typedef struct Node
+{
+    processData data;
+    struct Node *next;
+}Node;
+
+
 Node *front = NULL, *rear = NULL;
 int processesCnt = 0;
+
+
+void initMsgQ()
+{
+    qid = msgget(QKEY, IPC_CREAT | 0666);
+    if(qid == -1)
+    {
+        perror("Error initializing MSGQ");
+        exit(EXIT_FAILURE);
+    }
+}
 
 void clearResources(int);
 void startClk();
@@ -17,10 +35,12 @@ void readInputFile(char* pFileName);
 
 //test functions
 void _printQueue(Node* front);
+void _childErr(int signum);
 
 int main(int argc, char * argv[])
 {
     signal(SIGINT, clearResources);
+    // signal(SIGINT, _childErr);
 
     processData *prcs;
     
@@ -30,6 +50,7 @@ int main(int argc, char * argv[])
 
     // 2. Ask the user for the chosen scheduling algorithm and its parameters, if there are any.
     int algo = getAlgorithm();
+    initMsgQ();
 
     // 3. Initiate and create the scheduler and clock processes.
     startClk(); 
@@ -37,7 +58,6 @@ int main(int argc, char * argv[])
 
     // 4. Use this function after creating the clock process to initialize clock
     initClk();
-    initMsgQ();
 
     // To get time use this
     
@@ -47,13 +67,14 @@ int main(int argc, char * argv[])
     // 7. Clear clock resources
 
     //Generation Main Loop
+    Node* indexNode = front;
     while(true)
-    {
+    {   
         // 6. Send the information to the scheduler at the appropriate time.
-        if(front != NULL && front->data.arrivaltime == getClk()) 
+        if(indexNode != NULL && indexNode->data.arrivaltime == getClk()) 
         {
-            sendPrcs(&(front->data));
-            pop();
+            sendPrcs(&(indexNode->data));
+            indexNode = indexNode->next;
         }
     }
     clearResources(0);
@@ -241,4 +262,10 @@ void _printQueue(Node* front) //Internal function to test the correctness of inp
         printf("%d\n", front->data);
         front = front->next;
     }
+}
+
+
+void _childErr(int signum)
+{
+
 }
