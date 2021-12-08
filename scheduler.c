@@ -9,6 +9,8 @@ PCB** deadQ;
 PCB* runningP = NULL;
 FILE *pLog;
 
+void runAlgo();
+
 typedef struct Node
 {
     PCB *data;
@@ -34,14 +36,16 @@ void enqueue(PCB *val);
 int forkPrcs(int runningTime);
 void schdSRTN();
 void schdRR();
+void schdHPF();
 void handler(int signum);
 
 void _printQueue(Node* front);
 
 void initializePrcs(PCB* prcs1, const processData* rcvd);
-
+float calculateSD(float data[],int n);
 void createSchedulerLog();
 void writeSchedulerLog();
+void writeSchedulerPerf();
 
 /////////////////////////PQ/////////////////////////
 PCB** priorityQ;
@@ -60,7 +64,6 @@ void _swap(int ind1, int ind2);
 int main(int argc, char * argv[])
 {
     processData rcvd;
-    int currentClk;
     algo = atoi(argv[1]);
     processesCnt = atoi(argv[2]);
     quantum = atoi(argv[3]);
@@ -77,35 +80,33 @@ int main(int argc, char * argv[])
 
     createSchedulerLog();
     
+    int currentClk = 1;
     while(true)
     {
-        currentClk = getClk();
         if(msgrcv(qid, &rcvd, sizeof(processData) - sizeof(long), 0, IPC_NOWAIT) != -1)
         {
-            printf("RCVD\n");
             PCB* prcs = (PCB*) malloc(sizeof(PCB));
             initializePrcs(prcs, &rcvd);
             if(algo == RR)
                 enqueue(prcs);
             else
                 insert(prcs);
-            // _printQ(priorityQ, qSize);
-            // _printQueue(front);
-            
         }
-        if(deadSize == processesCnt)
+        if(currentClk != getClk())
         {
-            //output file
-               //close file descriptor
-            freeMem();          //freeing allocated dynamic memory
-            destroyClk(false);  //destroying clock
-            exit(EXIT_SUCCESS); //exitting program
+            currentClk = getClk();
+            runAlgo();
+            if(deadSize == processesCnt)
+            {
+                //output file
+                //close file descriptor
+                writeSchedulerPerf();
+                freeMem();          //freeing allocated dynamic memory
+                destroyClk(false);  //destroying clock
+                exit(EXIT_SUCCESS); //exitting program
+            }
         }
-        schdRR();
-        //call your algo
-        if(getClk() == 30)
-            exit(1);
-        while(currentClk == getClk());
+        
     }
 }
 
@@ -204,12 +205,10 @@ PCB* peak()
 void freeMem()
 {
     for(int i = 0; i < processesCnt; i++)
-        free(priorityQ[i]);
-
-    for(int i = 0; i < processesCnt; i++)
         free(deadQ[i]);
-
-    free(priorityQ);
+    
+    if(algo != RR)
+        free(priorityQ);
     free(deadQ);
 }
 
@@ -220,9 +219,11 @@ void schdSRTN()
 
     if (runningP) //There is a process already running
     {
+        runningP->remainingTime--;
         if (runningP->remainingTime > peak()->remainingTime) //if there is a process better than the currently running, switch
         {
             //stop the running process
+            writeSchedulerLog(runningP, getClk(), "stopped");
             kill(runningP->processId, SIGSTOP);
             runningP->state = READY;
 
@@ -235,11 +236,15 @@ void schdSRTN()
 
             if (runningP->startTime == -1) //process did not run before
             {
+                writeSchedulerLog(runningP, getClk(), "started");
                 runningP->startTime = getClk();
                 runningP->processId = forkPrcs(runningP->runningTime);
             }
             else //process did run before
+            {
+                writeSchedulerLog(runningP, getClk(), "resumed");
                 kill(runningP->processId, SIGCONT);
+            }
         }
     }
     else
@@ -248,11 +253,16 @@ void schdSRTN()
         runningP->state = RUNNING;
         if (runningP->startTime == -1)
         {
+            printf("clock: %d\n", getClk());
+            writeSchedulerLog(runningP, getClk(), "started");
             runningP->startTime = getClk();
             runningP->processId = forkPrcs(runningP->runningTime);
         }
         else
+        {
+            writeSchedulerLog(runningP, getClk(), "resumed");
             kill(runningP->processId, SIGCONT);
+        }
     }
 }
 
@@ -290,9 +300,6 @@ void schdRR()
         if(runningP == NULL)
             return;
     }
-
-    runningP->remainingTime=runningP->remainingTime-1;
-    
     if(( (runningP->runningTime)-(runningP->remainingTime) ) % quantum == 0 //process stopping running
          && (runningP->runningTime != runningP->remainingTime) && (runningP->state == RUNNING))
     {
@@ -317,8 +324,27 @@ void schdRR()
         writeSchedulerLog(runningP, getClk(), "resumed");
 
     }
+    runningP->remainingTime=runningP->remainingTime-1;
+}
+
+void schdHPF()
+{
+    if(runningP == NULL)
+    {
+        runningP = pop();
+        if(runningP == NULL)
+            return;
+    }
     
-    printf("RUNNING: %d\n", runningP->id);
+    if(runningP->startTime==-1)
+    {
+        runningP->startTime= getClk();
+        runningP->processId =  forkPrcs(runningP->runningTime);
+        writeSchedulerLog(runningP, getClk(), "started");
+    }
+    
+    runningP->remainingTime=runningP->remainingTime-1;
+
 }
 
 void createSchedulerLog()
@@ -338,8 +364,8 @@ void writeSchedulerLog(PCB* process, int time, char* state)
     pLog = fopen("Scheduler.log.txt", "a");
     int waitingTime = time-process->arrivalTime-(process->runningTime-process->remainingTime);
     if(state == "finished")
-        fprintf(pLog, "At time %d process %d %s arr %d total %d remain %d wait %d TA %d WTA %d\n"
-         ,time , process->id, state, process->arrivalTime, process->runningTime, process->remainingTime, waitingTime, process->finishTime - process->arrivalTime, (process->finishTime - process->arrivalTime)/process->runningTime );
+        fprintf(pLog, "At time %d process %d %s arr %d total %d remain %d wait %d TA %d WTA %f\n"
+         ,time , process->id, state, process->arrivalTime, process->runningTime, process->remainingTime, waitingTime, process->finishTime - process->arrivalTime, (process->finishTime - process->arrivalTime)/(float)process->runningTime );
     else
         fprintf(pLog, "At time %d process %d %s arr %d total %d remain %d wait %d\n"
          ,time , process->id, state, process->arrivalTime, process->runningTime, process->remainingTime, waitingTime);
@@ -379,30 +405,55 @@ PCB * dequeue()
          return NULL;
     else
     {
+        PCB *data = (PCB*)malloc(sizeof(PCB));
         //make the front Node points to the next Node
         //logically removing the front element
-        PCB *tmp = front->data;
+        Node* tmp = front;
+        data->arrivalTime = front->data->arrivalTime;
+        data->finishTime = front->data->finishTime;
+        data->id = front->data->id;
+        data->priority = front->data->priority;
+        data->processId = front->data->processId;
+        data->remainingTime = front->data->remainingTime;
+        data->runningTime = front->data->runningTime;
+        data->startTime = front->data->startTime;
+        data->state = front->data->state;
+        data->waitingTime = front->data->waitingTime;
         front = front->next;
         if(front == NULL)
             rear = NULL;
-        return tmp;
+        free(tmp);
+
+        return data;
     }
 }
-
+void runAlgo()
+{
+    if(algo == SRTN)
+        schdSRTN();
+    else if (algo == RR)
+        schdRR();
+    else if (algo == HPF)
+        schdHPF();
+}
 void handler(int signum)
 {
     
     int status;
     int pid= wait(&status);
-    printf("ZERO: %d\n", runningP->processId);
+
     if (runningP->processId == pid)
     {
-        //deadQ.insert(runningP);
+        deadQ[deadSize++] = runningP;
         runningP->finishTime = getClk();
-        runningP->waitingTime=runningP->finishTime-runningP->arrivalTime;
+        runningP->remainingTime = 0;
+        runningP->waitingTime=runningP->finishTime-runningP->arrivalTime-runningP->runningTime;
         writeSchedulerLog(runningP, getClk(), "finished");
         runningP = NULL;
     }
+
+    //call your algo
+    runAlgo();
 }
 
 void _printQueue(Node* front) //Internal function to test the correctness of inputting
@@ -412,4 +463,63 @@ void _printQueue(Node* front) //Internal function to test the correctness of inp
         printf("%d\n", front->data->id);
         front = front->next;
     }
+}
+
+float calculateSD(float data[],int n) {
+    float sum = 0.0, mean, SD = 0.0;
+    int i;
+    for (i = 0; i < n; ++i) {
+        sum += data[i];
+    }
+    mean = sum / n;
+    for (i = 0; i < n; ++i) {
+        SD += ((data[i] - mean) * (data[i] - mean));
+    }
+    return sqrt(SD / (n-1));
+}
+
+void writeSchedulerPerf()
+{
+    FILE *pPerf;
+    PCB* finishedP = NULL;
+    pPerf = fopen("Scheduler.perf.txt", "w");
+    if (pPerf ==NULL)
+    {
+        perror("Error creating/ openning Scheduler.perf!");
+        exit(EXIT_FAILURE);
+    }
+    int utilization=100;
+    float avgWTA =0;
+    float avgWaiting=0;
+    int TotalWaiting=0;
+    float stdWTA=0;
+    float TA=0;
+    float TAp = 0;
+    float WTA =0;
+    float excTime = 0;
+    float* arrWTA= malloc(sizeof(float)*processesCnt);
+
+    for(int i = 0 ; i < processesCnt ; i++)
+    {
+        finishedP = deadQ[i];
+         if(finishedP == NULL)
+            break;
+
+         TotalWaiting = TotalWaiting + finishedP->waitingTime;
+         TAp = (finishedP->finishTime - finishedP->arrivalTime);
+         TA = TA + (finishedP->finishTime - finishedP->arrivalTime);
+         excTime = excTime + finishedP->runningTime;
+         WTA = WTA + TAp/ (float)(finishedP->runningTime);
+         arrWTA[i]= TAp / (float)(finishedP->runningTime);
+    }
+
+    avgWaiting = (float)(TotalWaiting)/processesCnt;
+    avgWTA = WTA / processesCnt;
+    stdWTA = calculateSD(arrWTA,processesCnt);
+
+    fprintf(pPerf, "CPU utilization =  %d\n",utilization);
+    fprintf(pPerf, "Avg WTA = %f \n",avgWTA);
+    fprintf(pPerf, "Avg Waiting = %f\n",avgWaiting);
+    fprintf(pPerf, "Std WTA = %f\n", stdWTA);
+    fclose(pPerf);
 }

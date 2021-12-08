@@ -4,6 +4,7 @@
 int main(int agrc, char * argv[])
 {
     initClk();
+    int currentClk;
 
     //initializing remianing time of a process to its running time passed by scheduler
     int remainingTime = atoi(argv[1]);
@@ -12,7 +13,8 @@ int main(int agrc, char * argv[])
     //run and decrement remainingTime each second
     while (remainingTime--)
     {
-        sleep(1);
+        currentClk = getClk();
+        while(currentClk == getClk());
     }
     printf("PID: %d\n", schdPid);
     kill(schdPid, SIGUSR1);
