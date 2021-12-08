@@ -6,10 +6,9 @@ typedef struct Node
     struct Node *next;
 }Node;
 
-
 Node *front = NULL, *rear = NULL;
 int processesCnt = 0;
-
+int quantum = 0;
 
 void initMsgQ()
 {
@@ -71,7 +70,7 @@ int main(int argc, char * argv[])
     while(true)
     {   
         // 6. Send the information to the scheduler at the appropriate time.
-        if(indexNode != NULL && indexNode->data.arrivaltime == getClk()) 
+        if(indexNode != NULL && indexNode->data.arrivaltime == (long)getClk()) 
         {
             sendPrcs(&(indexNode->data));
             indexNode = indexNode->next;
@@ -123,9 +122,11 @@ void startScheduler(int algo)
     {
         char sAlgo[5]; //converting algo to char
         char sCnt[5];
+        char squantum[5];
         sprintf(sAlgo, "%d", algo);
         sprintf(sCnt, "%d", processesCnt);
-        char *const paramList[] = {"./scheduler.out", sAlgo, sCnt, NULL};
+        sprintf(squantum, "%d", quantum);
+        char *const paramList[] = {"./scheduler.out", sAlgo, sCnt, squantum, NULL};
         execv("./scheduler.out", paramList);
 
         perror("Error in execv'ing to scheduler");
@@ -146,6 +147,11 @@ Algorithm getAlgorithm()
     {
         printf("Error! Incorrect choice. Exiting program\n");
         exit(EXIT_FAILURE);
+    }
+    if(choice == 3)
+    {
+        printf("Enter quantum for Round Robin algorithm. \n ");
+        scanf("%d", &quantum);
     }
     return choice - 1;
 }
@@ -243,7 +249,7 @@ void readInputFile(char* pFileName)
         exit(EXIT_FAILURE);
     }
     getline(&line, &len, pInputFile); //read comment line 
-    while (fscanf(pInputFile, "%d", &p.id)!= -1) 
+    while (fscanf(pInputFile, "%ld", &p.id)!= -1) 
     {
         processesCnt++;
         fscanf(pInputFile, "%d", &p.arrivaltime);

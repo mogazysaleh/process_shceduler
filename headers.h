@@ -22,7 +22,7 @@ typedef enum ProcessState{BLOCKED, READY, RUNNING} ProcessState; //may be remove
 typedef enum Algorithm{HPF, SRTN, RR} Algorithm;
 typedef struct processData
 {
-    int id;
+    long id;
     int arrivaltime;
     int priority;
     int runningtime;
@@ -96,12 +96,10 @@ void destroyClk(bool terminateAll)
     }
 }
 
-
-
 void sendPrcs(processData* prcs)
 {
     printf("I will send ysta\n"); //test
-    if( msgsnd(qid, prcs, sizeof(processData), !IPC_NOWAIT) == -1)
+    if( msgsnd(qid, prcs, sizeof(processData) - sizeof(long), !IPC_NOWAIT) == -1)
     {
         perror("Error sending a msg");
         exit(EXIT_FAILURE);

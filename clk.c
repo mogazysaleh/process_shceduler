@@ -40,7 +40,7 @@ int main(int argc, char * argv[])
     while (1)
     {
         sleep(1);
-        printf("current time: %d\n", *shmaddr);
         (*shmaddr)++;
+        printf("current time: %d\n", *shmaddr);
     }
 }
