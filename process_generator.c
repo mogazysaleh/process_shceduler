@@ -26,7 +26,6 @@ void startScheduler(int);
 Algorithm getAlgorithm();
 
 void enqueue(processData val);
-bool dequeue(processData *p);
 bool isEmpty();
 void pop();
 
@@ -181,40 +180,6 @@ void enqueue(processData val)
 
         //make the new Node as the rear Node
         rear = newNode;
-    }
-}
-
-bool dequeue(processData *p)
-{
-    //used to free the first Node after dequeue
-    Node *temp;
-
-    if(front == NULL)
-         return false;
-    else
-    {
-        //take backup
-        temp = front;
-
-        //make the front Node points to the next Node
-        //logically removing the front element
-        front = front->next;
-
-        if(front == NULL)
-            rear = NULL;
-
-        processData *data = malloc(sizeof(processData));
-        data->id = temp->data.id;
-        data->arrivaltime = temp->data.arrivaltime;
-        data->runningtime = temp->data.runningtime;
-        data->priority = temp->data.priority;
-
-        p=data;
-
-        //free the first node
-        free(temp);
-
-        return true;
     }
 }
 
