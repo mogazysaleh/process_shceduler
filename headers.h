@@ -1,4 +1,6 @@
-#include <stdio.h>      //if you don't use scanf/printf change this include
+#pragma once
+
+#include <stdio.h>
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <sys/file.h>
@@ -18,30 +20,28 @@
 #define MSGQKEY 200
 
 typedef short bool;
-typedef enum ProcessState{READY, RUNNING, FINISHED} ProcessState; //may be removed
 typedef enum Algorithm{HPF, SRTN, RR} Algorithm;
-typedef struct processData
+typedef struct ProcessData
 {
     long id;
     int arrivalTime;
     int priority;
     int executionTime;
-}processData;
+}ProcessData;
 typedef struct PCB
 {
-    int id; //id from file
-    pid_t processId; //getpid()
-    ProcessState state;
-    int priority;//from process_generator
-    int arrivalTime;//from process_generator
-    int executionTime;//from process_generator
-    int waitingTime;//from handler(finish time - running time)
-    int remainingTime;//from process_generator (update in algorithm)
-    int startTime;//in algorithm
-    int finishTime;//handler
-    int TA; //turnaround time
+    int id;     //id from file
+    pid_t processId;    //getpid()
+    int priority;       //from process_generator
+    int arrivalTime;    //from process_generator
+    int executionTime;  //from process_generator
+    int waitingTime;    //from handler(finish time - running time)
+    int remainingTime;  //from process_generator (update in algorithm)
+    int startTime;  //in algorithm
+    int finishTime; //handler
+    int TA;     //turnaround time
     int recentStart;
-    double WTA; //weighted turnaround
+    float WTA; //weighted turnaround
 } PCB;
 
 int msgQId; //id of the msgQ to be used to share processes between scheduler and process_generator
@@ -94,7 +94,7 @@ void destroyClk(bool terminateAll)
     }
 }
 
-void initMsgQ()
+void initMsgQ() //initialize the message Q
 {
     msgQId = msgget(MSGQKEY, IPC_CREAT | 0666);
     if(msgQId == -1)
@@ -104,19 +104,18 @@ void initMsgQ()
     }
 }
 
-void sendPrcs(processData* prcs)
+void sendPrcs(ProcessData* prcs) //send process data through msgQ
 {
-    printf("I will send ysta at %d\n", getClk()); //test
-    if( msgsnd(msgQId, prcs, sizeof(processData) - sizeof(long), !IPC_NOWAIT) == -1)
+    if( msgsnd(msgQId, prcs, sizeof(ProcessData) - sizeof(long), !IPC_NOWAIT) == -1)
     {
         perror("Error sending a msg");
         exit(EXIT_FAILURE);
     }
 }
 
-ssize_t rcvPrcs(processData* prcs)
+ssize_t rcvPrcs(ProcessData* prcs) //rcv a process through msgQ
 {
-    return msgrcv(msgQId, prcs, sizeof(processData) - sizeof(long), 0, IPC_NOWAIT);
+    return msgrcv(msgQId, prcs, sizeof(ProcessData) - sizeof(long), 0, IPC_NOWAIT);
 }
 
 

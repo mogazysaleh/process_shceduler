@@ -12,17 +12,20 @@ int main(int agrc, char * argv[])
     int schdPid = atoi(argv[2]);
     int schdClk = atoi(argv[3]);
 
-    if(schdClk != getClk()) //solution to randomness
-        remainingTime--;
-    
-    //run and decrement remainingTime each second
-    while (remainingTime--)
+    if(remainingTime > 0)   //atoi will return - if remTime is passed to it as 0
     {
-        printf("remainingTime: %d\n", remainingTime);
-        alarm(1);
-        pause();
+        if(schdClk != getClk()) //solution to randomness
+            remainingTime--;
+        
+        //run and decrement remainingTime each second
+        while (remainingTime--)
+        {
+            alarm(1);
+            pause();
+        }
     }
-    printf("PID: %d at %d\n", getpid(), getClk());
+
+
     kill(schdPid, SIGUSR2);
 
     destroyClk(false);
