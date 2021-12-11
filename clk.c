@@ -6,8 +6,14 @@
  */
 
 #include "headers.h"
-#include "stdio.h"
+
 int shmid;
+
+
+void handleAlarm(int signum)
+{
+
+}
 
 /* Clear the resources before exit */
 void cleanup(int signum)
@@ -22,6 +28,7 @@ int main(int argc, char * argv[])
 {
     printf("Clock starting\n");
     signal(SIGINT, cleanup);
+    signal(SIGALRM, handleAlarm);
     int clk = 0;
     //Create shared memory for one integer variable 4 bytes
     shmid = shmget(SHKEY, 4, IPC_CREAT | 0644);
@@ -39,8 +46,8 @@ int main(int argc, char * argv[])
     *shmaddr = clk; /* initialize shared memory */
     while (1)
     {
-        sleep(1);
+        alarm(1);
+        pause();
         (*shmaddr)++;
-        printf("current time: %d\n", *shmaddr);
     }
 }

@@ -6,29 +6,27 @@
 #include <sys/shm.h>
 #include <sys/sem.h>
 #include <sys/msg.h>
-#include <sys/wait.h>
 #include <stdlib.h>
 #include <unistd.h>
 #include <signal.h>
+#include <sys/wait.h>
 #include <math.h>
 
 #define true 1
 #define false 0
 #define SHKEY 300
-#define QKEY 200
-
+#define MSGQKEY 200
 
 typedef short bool;
-typedef enum ProcessState{BLOCKED, READY, RUNNING} ProcessState; //may be removed
+typedef enum ProcessState{READY, RUNNING, FINISHED} ProcessState; //may be removed
 typedef enum Algorithm{HPF, SRTN, RR} Algorithm;
 typedef struct processData
 {
     long id;
-    int arrivaltime;
+    int arrivalTime;
     int priority;
-    int runningtime;
+    int executionTime;
 }processData;
-
 typedef struct PCB
 {
     int id; //id from file
@@ -36,18 +34,17 @@ typedef struct PCB
     ProcessState state;
     int priority;//from process_generator
     int arrivalTime;//from process_generator
-    int runningTime;//from process_generator
+    int executionTime;//from process_generator
     int waitingTime;//from handler(finish time - running time)
     int remainingTime;//from process_generator (update in algorithm)
     int startTime;//in algorithm
     int finishTime;//handler
+    int TA; //turnaround time
+    int recentStart;
+    double WTA; //weighted turnaround
 } PCB;
 
-
-
-
-int qid; //id of the msgQ to be used to share processes between scheduler and process_generator
-
+int msgQId; //id of the msgQ to be used to share processes between scheduler and process_generator
 
 ///==============================
 //don't mess with this variable//
@@ -85,7 +82,7 @@ void initClk()
  * resources between them and the clock module.
  * Again, Remember that the clock is only emulation!
  * Input: terminateAll: a flag to indicate whether that this is the end of simulation.
- * It terminates the whole system and releases resources.
+ *                      It terminates the whole system and releases resources.
 */
 
 void destroyClk(bool terminateAll)
@@ -97,19 +94,35 @@ void destroyClk(bool terminateAll)
     }
 }
 
+void initMsgQ()
+{
+    msgQId = msgget(MSGQKEY, IPC_CREAT | 0666);
+    if(msgQId == -1)
+    {
+        perror("Error initializing MSGQ");
+        exit(EXIT_FAILURE);
+    }
+}
+
 void sendPrcs(processData* prcs)
 {
-    printf("I will send ysta\n"); //test
-    if( msgsnd(qid, prcs, sizeof(processData) - sizeof(long), !IPC_NOWAIT) == -1)
+    printf("I will send ysta at %d\n", getClk()); //test
+    if( msgsnd(msgQId, prcs, sizeof(processData) - sizeof(long), !IPC_NOWAIT) == -1)
     {
         perror("Error sending a msg");
         exit(EXIT_FAILURE);
     }
 }
 
+ssize_t rcvPrcs(processData* prcs)
+{
+    return msgrcv(msgQId, prcs, sizeof(processData) - sizeof(long), 0, IPC_NOWAIT);
+}
+
+
 void destroyMsgQ()
 {
-    if(msgctl(qid, IPC_RMID, (void *)0) == -1)
+    if(msgctl(msgQId, IPC_RMID, (void *)0) == -1)
     {
         perror("Error destroying MsgQ\n");
         exit(EXIT_FAILURE);

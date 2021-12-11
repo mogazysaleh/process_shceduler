@@ -3,188 +3,312 @@
 Algorithm algo;
 int processesCnt;
 int quantum;
-
-int deadSize = 0;
-PCB** deadQ;
-PCB* runningP = NULL;
+sigset_t intmask;
+PCB* runningP;
 FILE *pLog;
 
-void runAlgo();
 
+
+int forkPrcs(int executionTime);
+void writeSchedulerLog(PCB* process, int time, char* state);
+void initSigMask();
+void blockSig();
+void unblockSig();
+void createSchedulerLog();
+void initializePrcs(PCB* prcs1, const processData* rcvd);
+void checkRcv();
+void writeSchedulerPerf();
+float calculateSD(float data[],int n);
+
+
+void finishPrcs();
+void stopPrcs();
+void clearExit();
+
+/*----------------------Algorithms----------------------*/
+void runAlgo();
+void runHPF();
+void runSRTN();
+void runRR();
+/*------------------------------------------------------*/
+
+/*-----------------------handlers-----------------------*/
+void handleAlarm(int signum);
+void handleUser1(int signum);
+void handleSigChild(int signum);
+/*------------------------------------------------------*/
+
+/*-------------------------Queue------------------------*/
 typedef struct Node
 {
     PCB *data;
     struct Node *next;
 }Node;
-
 Node *front = NULL, *rear = NULL;
-
-void initMsgQ()
-{
-    qid = msgget(QKEY, 0);
-    if(qid == -1)
-    {
-        perror("Error initializing MSGQ");
-        exit(EXIT_FAILURE);
-    }
-}
-
-void freeMem();
-
-PCB * dequeue();
-void enqueue(PCB *val);
-int forkPrcs(int runningTime);
-void schdSRTN();
-void schdRR();
-void schdHPF();
-void handler(int signum);
-
-void _printQueue(Node* front);
-
-void initializePrcs(PCB* prcs1, const processData* rcvd);
-float calculateSD(float data[],int n);
-void createSchedulerLog();
-void writeSchedulerLog();
-void writeSchedulerPerf();
-
-/////////////////////////PQ/////////////////////////
-PCB** priorityQ;
-int qSize = 0;
-bool insert(PCB* prcs);
-PCB* pop();
+int qSize = 0;  //current number of elements in queue
+void enqueue(PCB* data);
+PCB* dequeue();
 PCB* peak();
+void _printQueue(); //internal function for testing purposes
+/*------------------------------------------------------*/
 
-/////////////////////////Internal PQ functions/////////////////////////
+
+/*----------------------deadQueue-----------------------*/
+PCB** deadQ;
+int dQSize = 0;
+/*------------------------------------------------------*/
+
+
+/*--------------------------PQ--------------------------*/
+PCB** prQueue; //shares same functions with Queue
 void _heapifySRTN(int index);
 void _heapifyHPF(int index);
 void _printQ();
 void _swap(int ind1, int ind2);
-
+/*------------------------------------------------------*/
 
 int main(int argc, char * argv[])
 {
-    processData rcvd;
-    algo = atoi(argv[1]);
-    processesCnt = atoi(argv[2]);
-    quantum = atoi(argv[3]);
+    //setting user-defined signal handlers
+    signal(SIGALRM, handleAlarm);
+    signal(SIGUSR1, handleUser1);
+    signal(SIGUSR2, handleSigChild);
 
-    if(algo != RR)
-        priorityQ = calloc(processesCnt, sizeof(PCB*));
-    
-    deadQ = calloc(processesCnt, sizeof(PCB*));
-        
-    signal(SIGUSR1, handler);
-    
+    // sigignore(SIGCHLD); //ignoring childsignal so it doesn't interrupt running
+
+    algo = atoi(argv[1]);           //algorithm chosen by user
+    processesCnt = atoi(argv[2]);   //number of total processes in system
+    quantum = atoi(argv[3]);        //quantum in case of RR algorithm
+
+    //initializing the clock
     initClk();
+
+    //initializing Message queue with process_generator
     initMsgQ();
 
+    //initialize signal masking
+    initSigMask();
+
+    //clearing file and printing comment line
     createSchedulerLog();
-    
-    int currentClk = 1;
+
+    //initializing PQ and deadQ
+    if(algo != RR)
+        prQueue = (PCB**) calloc(processesCnt, sizeof(PCB*));
+    deadQ = (PCB**) calloc(processesCnt, sizeof(PCB*));
+
     while(true)
     {
-        if(msgrcv(qid, &rcvd, sizeof(processData) - sizeof(long), 0, IPC_NOWAIT) != -1)
-        {
-            PCB* prcs = (PCB*) malloc(sizeof(PCB));
-            initializePrcs(prcs, &rcvd);
-            if(algo == RR)
-                enqueue(prcs);
-            else
-                insert(prcs);
-        }
-        if(currentClk != getClk())
-        {
-            currentClk = getClk();
-            runAlgo();
-            if(deadSize == processesCnt)
-            {
-                //output file
-                //close file descriptor
-                writeSchedulerPerf();
-                freeMem();          //freeing allocated dynamic memory
-                destroyClk(false);  //destroying clock
-                exit(EXIT_SUCCESS); //exitting program
-            }
-        }
-        
+        pause();
     }
+
+    //upon termination release the clock resources
+    destroyClk(false);
 }
 
-bool insert(PCB* prcs)
+void handleAlarm(int signum) //used with RR to wakeup after (time = quantum) has passed
 {
-    if(qSize == processesCnt)
-        return false;
-    priorityQ[++qSize] = prcs;
+    printf("In alarm handler at %d\n", getClk());
+    checkRcv(); //so that recieved signals at this time step are placed before the one has just stopped
+    
+    runningP->remainingTime -= quantum; //decrement remaining time by quantum
+    
+    if(runningP->remainingTime > 0)
+        if(qSize > 0)   //do not stop if it is the only one in Q  
+            stopPrcs();
+    runAlgo();
 
-    if(algo == RR || qSize == 1)
-        return true;
+}
+
+void handleUser1(int signum) //a process or more have been sent && algorithm is SRTN
+{
+    printf("In user1 handler at %d\n", getClk());
+    checkRcv();
+    runAlgo();
+}
+
+void handleSigChild(int signum)
+{
+    alarm(0);   //clear any alarm for RR
+    printf("In sigchild handler at %d\n", getClk());
+    checkRcv();
+    if(runningP == NULL)
+        return;
+    if(runningP->recentStart == getClk())
+        sleep(1);
+    finishPrcs();
+    if(dQSize == processesCnt)
+        clearExit();
+    runAlgo();
+}
+
+void runAlgo()
+{
+    if(algo == HPF)
+        runHPF();
     else if(algo == SRTN)
-        _heapifySRTN(qSize/2);
-    else if(algo == HPF)
-        _heapifyHPF(qSize/2);
+        runSRTN();
+    else if(algo == RR)
+        runRR();
+}
+void runHPF()
+{
+    signal(SIGUSR1, handleUser1);
+    runningP = dequeue();
+    if(runningP == NULL)
+        return;
+    sigignore(SIGUSR1);
+    runningP->startTime = getClk();
+    runningP->processId =  forkPrcs(runningP->executionTime);
+    printf("process started at %d\n", getClk());
+    writeSchedulerLog(runningP, getClk(), "started");
+}   
 
-    return true; //do not heapify in case of algo == RR
+void runSRTN()
+{
+    if(runningP)
+    {
+        runningP->remainingTime -= (getClk() - runningP->recentStart);
+        if(peak() && (peak()->remainingTime < runningP->remainingTime))
+        {
+            stopPrcs();
+            runningP = dequeue();
+        }
+        else
+        {
+            runningP->recentStart = getClk();
+            return;
+        }
+    }
+    else
+        runningP = dequeue();
+
+
+    if(runningP == NULL)
+        return;
+
+
+    if(runningP->startTime==-1) //process running for the first time
+    {
+        runningP->startTime= getClk();
+        runningP->processId =  forkPrcs(runningP->executionTime);
+        printf("start %d: %d  %d\n", runningP->id, runningP->processId, getClk());
+        writeSchedulerLog(runningP, getClk(), "started");
+    }
+    else
+    {
+        printf("resume %d: %d\n", runningP->id, getClk());
+        kill(runningP->processId,SIGCONT);
+        writeSchedulerLog(runningP, getClk(), "resumed");
+    }
+    runningP->recentStart = getClk();
+}
+
+void runRR()
+{
+    printf("In RR at %d\n", getClk());
+    signal(SIGUSR1, handleUser1); //activating signal sent by process generator on recieving
+
+    if(runningP == NULL)
+    {
+        runningP = dequeue();
+        if(runningP == NULL)
+            return;
+
+        if(runningP->startTime==-1) //process running for the first time
+        {
+            runningP->startTime= getClk();
+            runningP->processId =  forkPrcs(runningP->executionTime);
+            printf("start %d: %d  %d\n", runningP->id, runningP->processId, getClk());
+            writeSchedulerLog(runningP, getClk(), "started");
+        }
+        else //process has run before
+        {
+            printf("resume %d: %d  %d\n", runningP->id, getClk(), runningP->processId);
+            kill(runningP->processId, SIGCONT);
+            writeSchedulerLog(runningP, getClk(), "resumed");
+        }
+        runningP->recentStart = getClk();
+    }
+
+
+
+    sigignore(SIGUSR1); //ignoring signal sent by process generator on recieving
+    alarm(quantum);//wake up after quantum seconds
 }
 
 void initializePrcs(PCB* prcs1, const processData* rcvd)
 {
     prcs1->id = rcvd->id;
-    prcs1->arrivalTime =  rcvd->arrivaltime;
+    prcs1->arrivalTime =  rcvd->arrivalTime;
     prcs1->priority = rcvd->priority;
-    prcs1->runningTime = rcvd->runningtime;
-    prcs1->remainingTime = rcvd->runningtime;
+    prcs1->executionTime = rcvd->executionTime;
+    prcs1->remainingTime = rcvd->executionTime;
     prcs1->startTime = -1; //meaning that process has never run before
-}
-void _printQ()
-{
-    for(int i = 1; i <= qSize; i++)
-        printf("%d  %d  %d  %d\n", priorityQ[i]->id, priorityQ[i]->priority, priorityQ[i]->runningTime, priorityQ[i]->arrivalTime);
-}
-void _heapifySRTN(int index)
-{
-    int least = index, left = 2 * index, right = left + 1;
-
-    if((left <= qSize) && (priorityQ[left]->remainingTime < priorityQ[least]->remainingTime))
-		least = left;
-	
-	if((right <= qSize) && (priorityQ[right]->remainingTime < priorityQ[least]->remainingTime))
-		least = right;
-
-	if(least == index)
-		return;
-    
-	_swap(least, index);
-	_heapifySRTN(least);
-}
-void _heapifyHPF(int index)
-{
-    int least = index, left = 2 * index, right = left + 1;
-
-    if((left <= qSize) && (priorityQ[left]->priority < priorityQ[least]->priority))
-		least = left;
-	
-	if((right <= qSize) && (priorityQ[right]->priority < priorityQ[least]->priority))
-		least = right;
-
-	if(least == index)
-		return;
-    
-	_swap(least, index);
-	_heapifyHPF(least);
-}
-void _swap(int ind1, int ind2)
-{
-    PCB* tmp = priorityQ[ind1];
-    priorityQ[ind1] = priorityQ[ind2];
-    priorityQ[ind2] = tmp;
+    prcs1->state = READY;
 }
 
-PCB* pop()
+void enqueue(PCB* data)
 {
+    if(algo == RR)
+    {
+        qSize++;
+        Node *newNode = malloc(sizeof(Node));
+        newNode->next = NULL;
+        newNode->data = data;
+        
+        //First node to be added
+        if(front == NULL && rear == NULL)
+        {
+            //make both front and rear points to newNode
+            front = newNode;
+            rear = newNode;
+        }
+        else //not the first
+        {
+            //add newNode in rear->next
+            rear->next = newNode;
+
+            //make newNode as the rear Node
+            rear = newNode;
+        }
+        return;
+    }
+
+    prQueue[++qSize] = data; //ignoring 0 index by post-increment
+    if(qSize == 1)
+        return;
+    if(algo == SRTN)
+        for(int i = qSize/2; i > 0; i--)
+            _heapifySRTN(i); //heapify from parent
+    else if(algo == HPF)
+        for(int i = qSize/2; i > 0; i--)
+            _heapifyHPF(i); //heapify from parent
+
+}
+
+PCB* dequeue()
+{
+    if(algo == RR)
+    {
+        if(front == NULL)
+            return NULL;
+        if(front == rear)
+            rear = NULL;
+        Node* tempNode = front;
+        PCB* tempData = front->data;
+        
+        front = front->next;
+        free(tempNode);
+        qSize--;
+        return tempData;
+    }
+
     if(qSize == 0)
         return NULL;
-    PCB* prcs = priorityQ[1];
-    priorityQ[1] = priorityQ[qSize--];
+    PCB* prcs = prQueue[1];
+    prQueue[1] = prQueue[qSize--];
+
     if(qSize > 1)
         if(algo == SRTN)
             _heapifySRTN(1);
@@ -192,81 +316,10 @@ PCB* pop()
             _heapifyHPF(1);
 
     return prcs;
+
 }
 
-PCB* peak()
-{
-    if(qSize == 0)
-        return NULL;
-    
-    return priorityQ[1];
-}
-
-void freeMem()
-{
-    for(int i = 0; i < processesCnt; i++)
-        free(deadQ[i]);
-    
-    if(algo != RR)
-        free(priorityQ);
-    free(deadQ);
-}
-
-void schdSRTN()
-{
-    if (peak() == NULL)
-        return;
-
-    if (runningP) //There is a process already running
-    {
-        runningP->remainingTime--;
-        if (runningP->remainingTime > peak()->remainingTime) //if there is a process better than the currently running, switch
-        {
-            //stop the running process
-            writeSchedulerLog(runningP, getClk(), "stopped");
-            kill(runningP->processId, SIGSTOP);
-            runningP->state = READY;
-
-            //switch the two processes
-            insert(runningP);
-            runningP = pop();
-
-            //change state of prcs that has just been popped
-            runningP->state = RUNNING;
-
-            if (runningP->startTime == -1) //process did not run before
-            {
-                writeSchedulerLog(runningP, getClk(), "started");
-                runningP->startTime = getClk();
-                runningP->processId = forkPrcs(runningP->runningTime);
-            }
-            else //process did run before
-            {
-                writeSchedulerLog(runningP, getClk(), "resumed");
-                kill(runningP->processId, SIGCONT);
-            }
-        }
-    }
-    else
-    {
-        runningP = pop();
-        runningP->state = RUNNING;
-        if (runningP->startTime == -1)
-        {
-            printf("clock: %d\n", getClk());
-            writeSchedulerLog(runningP, getClk(), "started");
-            runningP->startTime = getClk();
-            runningP->processId = forkPrcs(runningP->runningTime);
-        }
-        else
-        {
-            writeSchedulerLog(runningP, getClk(), "resumed");
-            kill(runningP->processId, SIGCONT);
-        }
-    }
-}
-
-int forkPrcs(int runningTime)
+int forkPrcs(int executionTime)
 {
     pid_t schdPid = getpid();
     pid_t prcsPid = fork();
@@ -278,11 +331,13 @@ int forkPrcs(int runningTime)
     }
     else if(prcsPid == 0) //execv'ing to process
     {
-        char sRunningTime[5] = {0};
+        char sExecutionTime[5] = {0};
         char sPid[7] = {0};
+        char sClk[7] = {0};
         sprintf(sPid, "%d", schdPid);
-        sprintf(sRunningTime, "%d", runningTime);
-        char *const paramList[] = {"./process.out", sRunningTime, sPid, NULL};
+        sprintf(sExecutionTime, "%d", executionTime);
+        sprintf(sClk, "%d", getClk());
+        char *const paramList[] = {"./process.out", sExecutionTime, sPid, sClk,NULL};
         execv("./process.out", paramList);
         
         //if it executes what is under this line, then execv has failed
@@ -292,58 +347,17 @@ int forkPrcs(int runningTime)
     return prcsPid;
 }
 
-void schdRR()
+void writeSchedulerLog(PCB* process, int time, char* state)
 {
-    if(runningP == NULL) //no process is running
-    {
-        runningP = dequeue();
-        if(runningP == NULL)
-            return;
-    }
-    if(( (runningP->runningTime)-(runningP->remainingTime) ) % quantum == 0 //process stopping running
-         && (runningP->runningTime != runningP->remainingTime) && (runningP->state == RUNNING))
-    {
-        kill(runningP->processId,SIGSTOP);
-        runningP->state = READY;
-        writeSchedulerLog(runningP, getClk(), "stopped");
-        enqueue(runningP);
-        runningP=dequeue();
-    }
-
-    if(runningP->startTime==-1) //process running for the first time
-    {
-        runningP->startTime= getClk();
-        runningP->state = RUNNING;
-        runningP->processId =  forkPrcs(runningP->runningTime);
-        writeSchedulerLog(runningP, getClk(), "started");
-    }
-    else if(runningP->state == READY)
-    {
-        runningP->state = RUNNING;
-        kill(runningP->processId,SIGCONT);
-        writeSchedulerLog(runningP, getClk(), "resumed");
-
-    }
-    runningP->remainingTime=runningP->remainingTime-1;
-}
-
-void schdHPF()
-{
-    if(runningP == NULL)
-    {
-        runningP = pop();
-        if(runningP == NULL)
-            return;
-    }
-    
-    if(runningP->startTime==-1)
-    {
-        runningP->startTime= getClk();
-        runningP->processId =  forkPrcs(runningP->runningTime);
-        writeSchedulerLog(runningP, getClk(), "started");
-    }
-    
-    runningP->remainingTime=runningP->remainingTime-1;
+    int waitingTime = time-process->arrivalTime-(process->executionTime-process->remainingTime);
+    if(state == "finished")
+        fprintf(pLog, "At time %2d process %2d %-8s arr %2d total %2d remain %2d wait %2d TA %d WTA %.2f\n"
+         ,time , process->id, state, process->arrivalTime, process->executionTime, process->remainingTime, waitingTime,
+         process->TA, process->WTA);
+    else
+        fprintf(pLog, "At time %2d process %2d %-8s arr %2d total %2d remain %2d wait %2d\n"
+         ,time , process->id, state, process->arrivalTime, process->executionTime, process->remainingTime, waitingTime);
+         
 
 }
 
@@ -357,125 +371,127 @@ void createSchedulerLog()
     }
     fprintf(pLog, "#At time x process y state arr w total z remain y wait k\n");
     fclose(pLog);
-}
-
-void writeSchedulerLog(PCB* process, int time, char* state)
-{
     pLog = fopen("Scheduler.log.txt", "a");
-    int waitingTime = time-process->arrivalTime-(process->runningTime-process->remainingTime);
-    if(state == "finished")
-        fprintf(pLog, "At time %d process %d %s arr %d total %d remain %d wait %d TA %d WTA %f\n"
-         ,time , process->id, state, process->arrivalTime, process->runningTime, process->remainingTime, waitingTime, process->finishTime - process->arrivalTime, (process->finishTime - process->arrivalTime)/(float)process->runningTime );
-    else
-        fprintf(pLog, "At time %d process %d %s arr %d total %d remain %d wait %d\n"
-         ,time , process->id, state, process->arrivalTime, process->runningTime, process->remainingTime, waitingTime);
-         
-    fclose(pLog);
 }
 
-
-void enqueue(PCB *val)
+void initSigMask()
 {
-    Node *newNode = malloc(sizeof(Node));
+    if ((sigemptyset(&intmask) == -1) || (sigaddset(&intmask, SIGUSR1) == -1))
+    {
+        perror("Failed to initialize the signal mask");
+        exit(EXIT_FAILURE);
+    }
+}
+
+void blockSig()
+{
+    if (sigprocmask(SIG_BLOCK, &intmask, NULL) == -1)
+    {
+        perror("Failed to block SIGUSR1");
+        exit(EXIT_FAILURE);
+    }
+}
+
+void unblockSig()
+{
+    if (sigprocmask(SIG_UNBLOCK, &intmask, NULL) == -1)
+    {
+        perror("Failed to unblock SIGUSR1");
+        exit(EXIT_FAILURE);
+    }
+}
+
+void finishPrcs()
+{
+    printf("finish %d: %d\n", runningP->id, getClk());
+    deadQ[dQSize++] = runningP;
+    runningP->finishTime = getClk();
+    runningP->remainingTime = 0;
+    runningP->waitingTime=runningP->finishTime-runningP->arrivalTime-runningP->executionTime;
+    runningP->TA = runningP->finishTime - runningP->arrivalTime;
+    runningP->WTA = runningP->TA / (float)runningP->executionTime;
+    runningP->WTA = round(runningP->WTA * 100)/100;
+
+    writeSchedulerLog(runningP, getClk(), "finished");
+    runningP = NULL;
+}
+void stopPrcs()
+{
+    printf("stop %d: %d\n", runningP->id, getClk());
+    if(kill(runningP->processId, SIGSTOP) == -1)
+    {
+        perror("ERROR IN STP");
+        exit(EXIT_FAILURE);
+    }
+    writeSchedulerLog(runningP, getClk(), "stopped");
+    enqueue(runningP);
+    runningP = NULL;
+}
+
+void checkRcv()
+{
+    processData rcvd;
+    PCB* prcs;
+    while (rcvPrcs(&rcvd) != -1)
+    {
+        prcs = (PCB*) malloc(sizeof(PCB));
+        initializePrcs(prcs, &rcvd);
+        enqueue(prcs);
+    }
+}
+
+void clearExit()
+{
+    printf("HOLAAAA\n");
+    writeSchedulerPerf();
+    exit(EXIT_SUCCESS);
+}
+
+void _heapifyHPF(int index)
+{
+    int least = index, left = 2 * index, right = left + 1;
+
+    if((left <= qSize) && (prQueue[left]->priority < prQueue[least]->priority))
+		least = left;
+	
+	if((right <= qSize) && (prQueue[right]->priority < prQueue[least]->priority))
+		least = right;
+
+	if(least == index)
+		return;
+
+	_swap(least, index);
+	_heapifyHPF(least);
+}
+
+void _heapifySRTN(int index)
+{
+    int least = index, left = 2 * index, right = left + 1;
+
+    if((left <= qSize) && (prQueue[left]->remainingTime < prQueue[least]->remainingTime))
+		least = left;
+	
+	if((right <= qSize) && (prQueue[right]->remainingTime < prQueue[least]->remainingTime))
+		least = right;
+
+	if(least == index)
+		return;
     
-    newNode->data = val;
-
-    newNode->next = NULL;
-    
-    //if it is the first Node
-    if(front == NULL && rear == NULL)
-        //make both front and rear points to the new Node
-    {
-        front = newNode;
-        rear = newNode;
-    }
-    else
-    {
-        //add newnode in rear->next
-        rear->next = newNode;
-
-        //make the new Node as the rear Node
-        rear = newNode;
-    }
+	_swap(least, index);
+	_heapifySRTN(least);
 }
-
-PCB * dequeue()
+void _swap(int ind1, int ind2)
 {
-    if(front == NULL)
-         return NULL;
-    else
-    {
-        PCB *data = (PCB*)malloc(sizeof(PCB));
-        //make the front Node points to the next Node
-        //logically removing the front element
-        Node* tmp = front;
-        data->arrivalTime = front->data->arrivalTime;
-        data->finishTime = front->data->finishTime;
-        data->id = front->data->id;
-        data->priority = front->data->priority;
-        data->processId = front->data->processId;
-        data->remainingTime = front->data->remainingTime;
-        data->runningTime = front->data->runningTime;
-        data->startTime = front->data->startTime;
-        data->state = front->data->state;
-        data->waitingTime = front->data->waitingTime;
-        front = front->next;
-        if(front == NULL)
-            rear = NULL;
-        free(tmp);
-
-        return data;
-    }
+    PCB* tmp = prQueue[ind1];
+    prQueue[ind1] = prQueue[ind2];
+    prQueue[ind2] = tmp;
 }
-void runAlgo()
+
+PCB* peak()
 {
-    if(algo == SRTN)
-        schdSRTN();
-    else if (algo == RR)
-        schdRR();
-    else if (algo == HPF)
-        schdHPF();
-}
-void handler(int signum)
-{
-    
-    int status;
-    int pid= wait(&status);
-
-    if (runningP->processId == pid)
-    {
-        deadQ[deadSize++] = runningP;
-        runningP->finishTime = getClk();
-        runningP->remainingTime = 0;
-        runningP->waitingTime=runningP->finishTime-runningP->arrivalTime-runningP->runningTime;
-        writeSchedulerLog(runningP, getClk(), "finished");
-        runningP = NULL;
-    }
-
-    //call your algo
-    runAlgo();
-}
-
-void _printQueue(Node* front) //Internal function to test the correctness of inputting
-{
-    while(front)
-    {
-        printf("%d\n", front->data->id);
-        front = front->next;
-    }
-}
-
-float calculateSD(float data[],int n) {
-    float sum = 0.0, mean, SD = 0.0;
-    int i;
-    for (i = 0; i < n; ++i) {
-        sum += data[i];
-    }
-    mean = sum / n;
-    for (i = 0; i < n; ++i) {
-        SD += ((data[i] - mean) * (data[i] - mean));
-    }
-    return sqrt(SD / (n-1));
+    if(qSize == 0)
+        return NULL;
+    return prQueue[1];
 }
 
 void writeSchedulerPerf()
@@ -494,7 +510,6 @@ void writeSchedulerPerf()
     int TotalWaiting=0;
     float stdWTA=0;
     float TA=0;
-    float TAp = 0;
     float WTA =0;
     float excTime = 0;
     float* arrWTA= malloc(sizeof(float)*processesCnt);
@@ -506,20 +521,37 @@ void writeSchedulerPerf()
             break;
 
          TotalWaiting = TotalWaiting + finishedP->waitingTime;
-         TAp = (finishedP->finishTime - finishedP->arrivalTime);
-         TA = TA + (finishedP->finishTime - finishedP->arrivalTime);
-         excTime = excTime + finishedP->runningTime;
-         WTA = WTA + TAp/ (float)(finishedP->runningTime);
-         arrWTA[i]= TAp / (float)(finishedP->runningTime);
+         TA = TA + finishedP->TA;
+         excTime = excTime + finishedP->executionTime;
+         WTA = WTA + finishedP->WTA;
+         arrWTA[i]= finishedP->WTA;
     }
 
     avgWaiting = (float)(TotalWaiting)/processesCnt;
+    avgWaiting = round(avgWaiting*100)/100;
+
     avgWTA = WTA / processesCnt;
+    avgWTA = round(avgWTA*100)/100;
+
     stdWTA = calculateSD(arrWTA,processesCnt);
+    stdWTA = round(stdWTA*100)/100;
 
     fprintf(pPerf, "CPU utilization =  %d\n",utilization);
-    fprintf(pPerf, "Avg WTA = %f \n",avgWTA);
-    fprintf(pPerf, "Avg Waiting = %f\n",avgWaiting);
-    fprintf(pPerf, "Std WTA = %f\n", stdWTA);
+    fprintf(pPerf, "Avg WTA = %.2f \n",avgWTA);
+    fprintf(pPerf, "Avg Waiting = %.2f\n",avgWaiting);
+    fprintf(pPerf, "Std WTA = %.2f\n", stdWTA);
     fclose(pPerf);
+}
+
+float calculateSD(float data[],int n) {
+    float sum = 0.0, mean, SD = 0.0;
+    int i;
+    for (i = 0; i < n; ++i) {
+        sum += data[i];
+    }
+    mean = sum / n;
+    for (i = 0; i < n; ++i) {
+        SD += ((data[i] - mean) * (data[i] - mean));
+    }
+    return sqrt(SD / (n-1));
 }

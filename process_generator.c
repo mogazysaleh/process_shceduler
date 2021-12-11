@@ -1,92 +1,113 @@
 #include "headers.h"
 
+
+
+int quantum = 0;    //quantum from RR algorithm inputted from user
+pid_t schdPid;      //pid of scheduler
+Algorithm algo;     //Algorithm chosen by user to run
+sigset_t intmask;   //to temporarily block signal from process_generator in RR and HPF
+
+
+void readInputFile(char* pFileName);    //reading processes from the provided file
+void clearResources(int);               //clearing resources when exiting
+void startClk();        //execv'ing the clock
+void startScheduler();  //execv'ing the scheduler
+void handleAlarm();     //handler for alarm signal
+void getUserInput();   //get algorithm parameters from user
+
+
+
+/*----------------------Queue----------------------*/
 typedef struct Node
 {
-    processData data;
+    processData *data;
     struct Node *next;
 }Node;
-
 Node *front = NULL, *rear = NULL;
-int processesCnt = 0;
-int quantum = 0;
+int qSize = 0;  //would equal total number of processes when the program exits
+void pop();     //throws front and frees memory
+void enqueue(processData *val);
+void _printQueue(); //internal function for testing purposes
+/*-------------------------------------------------*/
 
-void initMsgQ()
-{
-    qid = msgget(QKEY, IPC_CREAT | 0666);
-    if(qid == -1)
-    {
-        perror("Error initializing MSGQ");
-        exit(EXIT_FAILURE);
-    }
-}
-
-void clearResources(int);
-void startClk();
-void startScheduler(int);
-Algorithm getAlgorithm();
-
-void enqueue(processData val);
-bool isEmpty();
-void pop();
-
-void readInputFile(char* pFileName);
-
-//test functions
-void _printQueue(Node* front);
-void _childErr(int signum);
 
 int main(int argc, char * argv[])
 {
     signal(SIGINT, clearResources);
-    // signal(SIGINT, _childErr);
+    signal(SIGALRM, handleAlarm);
 
-    processData *prcs;
-    
-    // 1. Read the input files.
+    //Read the input file.
     readInputFile("processes.txt");
 
+    //Ask the user for the chosen scheduling algorithm and its parameters, if there are any.
+    getUserInput();
 
-    // 2. Ask the user for the chosen scheduling algorithm and its parameters, if there are any.
-    int algo = getAlgorithm();
+    //Initiate and create the scheduler and clock processes.
     initMsgQ();
+    startScheduler();
+    startClk();
+    
 
-    // 3. Initiate and create the scheduler and clock processes.
-    startClk(); 
-    startScheduler(algo);
-
-    // 4. Use this function after creating the clock process to initialize clock
+    //Use this function after creating the clock process to initialize clock
     initClk();
 
-    // To get time use this
-    
-    // TODO 
-    // 5. Create a data structure for processes and provide it with its parameters.
-    
-    // 7. Clear clock resources
-
-    //Generation Main Loop
-    Node* indexNode = front;
-    while(true)
-    {   
-        // 6. Send the information to the scheduler at the appropriate time.
-        if(indexNode != NULL && indexNode->data.arrivaltime == (long)getClk()) 
+    while(front)
+    {
+        //Send the information to the scheduler at the appropriate time.
+        if(front->data->arrivalTime == getClk())
         {
-            sendPrcs(&(indexNode->data));
-            indexNode = indexNode->next;
+            sendPrcs(front->data);
+            kill(schdPid, SIGUSR1);
+            pop();
+        }
+        else
+        {
+            alarm(1);
+            pause();
         }
     }
+    pause(); //sleep till scheduler finishes
+
+    //Clear clock resources
     clearResources(0);
 }
 
+void readInputFile(char* pFileName)
+{
+    FILE *pInputFile;
 
+    char * line = NULL;
+    size_t len = 0;
+    ssize_t read;
+    int id;
+    processData *p;
 
+    pInputFile = fopen(pFileName, "r"); //opening file for read
+    if (pInputFile==NULL)
+    {
+        perror("Error reading input file");
+        exit(EXIT_FAILURE);
+    }
+    getline(&line, &len, pInputFile); //read comment line 
+    while (fscanf(pInputFile, "%ld", &id) != -1) //read line by line till end
+    {
+        p = (processData*)malloc(sizeof(processData));
+        p->id = id;
+        fscanf(pInputFile, "%d", &(p->arrivalTime));
+        fscanf(pInputFile, "%d", &(p->executionTime));
+        fscanf(pInputFile, "%d", &(p->priority));
+        enqueue(p);
+        
+    }
 
+    fclose(pInputFile); //close file upon finish
+}
 
 
 void clearResources(int signum)
 {
-    destroyClk(true);
-    destroyMsgQ();
+    destroyClk(true);   //destroy whole group
+    destroyMsgQ();      //destroy msgQ
     exit(EXIT_SUCCESS);
 }
 
@@ -98,7 +119,7 @@ void startClk()
         perror("Error forking for clock");
         exit(EXIT_FAILURE);
     }
-    else if(clk_id == 0) //Child
+    else if(clk_id == 0) //Child(clock) execv'es
     {
         char *const paramList[] = {"./clk.out", NULL};
         execv("./clk.out", paramList);
@@ -106,34 +127,43 @@ void startClk()
         perror("Error in execv'ing to clock");
         exit(EXIT_FAILURE);
     }
-    //Parent continues and exits the function
+    //Parent(process_generator) continues and exits the function
 }
 
-void startScheduler(int algo)
+void startScheduler()
 {
-    pid_t scheduler_id = fork();
-    if(scheduler_id == -1) //Error Occured
+    schdPid = fork();
+    if(schdPid == -1) //Error Occured
     {
         perror("Error forking for scheduler");
         exit(EXIT_FAILURE);
     }
-    else if(scheduler_id == 0) //Child
+    else if(schdPid == 0) //Child
     {
-        char sAlgo[5]; //converting algo to char
-        char sCnt[5];
+        char sAlgo[5]; 
+        char sCnt[10];  
         char squantum[5];
+
+        //converting ints to chars for sending as parameters
         sprintf(sAlgo, "%d", algo);
-        sprintf(sCnt, "%d", processesCnt);
+        sprintf(sCnt, "%d", qSize);
         sprintf(squantum, "%d", quantum);
         char *const paramList[] = {"./scheduler.out", sAlgo, sCnt, squantum, NULL};
         execv("./scheduler.out", paramList);
 
+        //This will be executed in case of unsuccessful execv() only
         perror("Error in execv'ing to scheduler");
         exit(EXIT_FAILURE);
     }
+    //Parent(process_generator) continues and exits the function
 }
 
-Algorithm getAlgorithm()
+void handleAlarm()
+{
+
+}
+
+void getUserInput()
 {
     int choice;
     printf(
@@ -142,101 +172,61 @@ Algorithm getAlgorithm()
     2)Shortest Remaining time Next (SRTN).\n\
     3)Round Robin (RR).\n");
     scanf("%d", &choice);
-    if(choice > 3 || choice < 1)
+    if(choice > 3 || choice < 1) //choice is out of range
     {
         printf("Error! Incorrect choice. Exiting program\n");
         exit(EXIT_FAILURE);
     }
-    if(choice == 3)
+    if(choice == 3) //quantum needed in case of RR
     {
         printf("Enter quantum for Round Robin algorithm. \n ");
         scanf("%d", &quantum);
     }
-    return choice - 1;
-}
-
-void enqueue(processData val)
-{
-    Node *newNode = malloc(sizeof(Node));
-
-    newNode->data.id = val.id;
-    newNode->data.arrivaltime=val.arrivaltime;
-    newNode->data.runningtime = val.runningtime;
-    newNode->data.priority=val.priority;
-
-    newNode->next = NULL;
-    
-    //if it is the first Node
-    if(front == NULL && rear == NULL)
-        //make both front and rear points to the new Node
-    {
-        front = newNode;
-        rear = newNode;
-    }
-    else
-    {
-        //add newnode in rear->next
-        rear->next = newNode;
-
-        //make the new Node as the rear Node
-        rear = newNode;
-    }
+    algo =  choice - 1; //decremented since Algorithm is an enum that starts with 0
 }
 
 void pop()
 {
+    if(front == NULL)
+        return;
+    if(front == rear)
+        rear = NULL;
     Node* temp = front;
     front = front->next;
+    free(temp->data);   //First free data
     free(temp);
 }
 
-bool isEmpty()
+void enqueue(processData *val)
 {
-    if(rear==NULL & front==NULL)
-        return true;
-    else 
-        return false;
-}
-
-void readInputFile(char* pFileName)
-{
-    FILE *pInputFile;
-
-    char * line = NULL;
-    size_t len = 0;
-    ssize_t read;
-    processData p;
-
-    pInputFile = fopen(pFileName, "r");
-    if (pInputFile==NULL)
+    qSize++;
+    Node *newNode = malloc(sizeof(Node));
+    newNode->next = NULL;
+    newNode->data = val;
+    
+    //First node to be added
+    if(front == NULL && rear == NULL)
     {
-        perror("Error reading input file!");
-        exit(EXIT_FAILURE);
+        //make both front and rear points to newNode
+        front = newNode;
+        rear = newNode;
     }
-    getline(&line, &len, pInputFile); //read comment line 
-    while (fscanf(pInputFile, "%ld", &p.id)!= -1) 
+    else //not the first
     {
-        processesCnt++;
-        fscanf(pInputFile, "%d", &p.arrivaltime);
-        fscanf(pInputFile, "%d", &p.runningtime);
-        fscanf(pInputFile, "%d", &p.priority);
-        enqueue(p);
-    }
+        //add newNode in rear->next
+        rear->next = newNode;
 
-    fclose(pInputFile);
-}
-
-void _printQueue(Node* front) //Internal function to test the correctness of inputting
-{
-    while(front)
-    {
-        printf("%d\n", front->data);
-        front = front->next;
+        //make newNode as the rear Node
+        rear = newNode;
     }
 }
 
-
-void _childErr(int signum)
+void _printQueue() //Internal function for testing purposes
 {
-
+    Node* index = front;
+    while(index)
+    {
+        printf("ID: %d\n", index->data->id);
+        index = index->next;
+    }
 }
